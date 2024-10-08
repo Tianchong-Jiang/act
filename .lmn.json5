@@ -1,0 +1,57 @@
+{
+    "project": {
+        "name": "octo",
+        "mount": [],
+        "exclude": [".git", ".env", ".venv", "Pipfile", "wandb", "*.mp4", "*.egg-info", "__pycache__", ".output", "csvs", "*.csv", "donottransport", "*.bk2/*", "*.pdf"],  // ".png",
+    },
+    "machines": {
+        "elm": {
+            "docker": {
+                "image": "tc/act",
+                "group_id": 4000,  // ripl
+                "network": "host",
+                "mount_from_host": {
+                    "/ripl/data/tianchong": "/mount",
+                },
+                "startup": ["groupadd -g 4000 ripl"],
+                "environment": {
+                    "HF_HOME": "/mount/hf_home"
+                },
+            },
+        },
+        "birch": {
+            "docker": {
+                "image": "ripl/octo",
+                "group_id": 4000,  // ripl
+                "network": "host",
+                "mount_from_host": {
+                    "/ripl/data/tianchong/octo": "/mount",
+                    "/home/tianchong/": "/home",
+                },
+                "startup": ["groupadd -g 4000 ripl"],
+                "environment": {
+                    "HF_HOME": "/mount/hf_home"
+                },
+            },
+        },
+        "beehive": {
+            "mode": "slurm-sing",
+            "mount": [],
+            "singularity": {
+                // "startup": "ldconfig /.singularity.d/libs",
+                "sif_file": "/share/data/ripl/tianchong/octo.sif",
+                "writable_tmpfs": true,
+                "env_from_host": ["CUDA_VISIBLE_DEVICES"],
+                "mount_from_host": {
+                    "/share/data/ripl/tianchong/octo": "/mount",
+                },
+                "environment": {
+                    "HF_HOME": "/mount/hf_home"
+                },
+            },
+            "slurm": {
+                "constraint": "48g",
+            }
+        },
+    },
+}
