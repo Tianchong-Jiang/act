@@ -3,6 +3,7 @@ import torch
 import os
 import h5py
 from torch.utils.data import TensorDataset, DataLoader
+import pickle
 
 import IPython
 e = IPython.embed
@@ -14,106 +15,42 @@ class EpisodicDataset(torch.utils.data.Dataset):
         self.dataset_dir = dataset_dir
         self.camera_names = camera_names
         self.norm_stats = norm_stats
-        self.is_sim = None
-        self.__getitem__(0) # initialize self.is_sim
+
+        # get object name
+        filename = os.listdir(dataset_dir)[0]
+        self.object_name = filename.split('_')[0]
+
 
     def __len__(self):
         return len(self.episode_ids)
 
     def __getitem__(self, index):
-        sample_full_episode = False # hardcode
-
         episode_id = self.episode_ids[index]
-        dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_id}.hdf5')
-        with h5py.File(dataset_path, 'r') as root:
-            is_sim = root.attrs['sim']
-            original_action_shape = root['/action'].shape
-            episode_len = original_action_shape[0]
-            if sample_full_episode:
-                start_ts = 0
-            else:
-                start_ts = np.random.choice(episode_len)
-            # get observation at start_ts only
-            qpos = root['/observations/qpos'][start_ts]
-            qvel = root['/observations/qvel'][start_ts]
-            image_dict = dict()
-            for cam_name in self.camera_names:
-                image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
-            # get all actions after and including start_ts
-            if is_sim:
-                action = root['/action'][start_ts:]
-                action_len = episode_len - start_ts
-            else:
-                action = root['/action'][max(0, start_ts - 1):] # hack, to make timesteps more aligned
-                action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
-
-        self.is_sim = is_sim
-        padded_action = np.zeros(original_action_shape, dtype=np.float32)
-        padded_action[:action_len] = action
-        is_pad = np.zeros(episode_len)
-        is_pad[action_len:] = 1
-
-        # new axis for different cameras
-        all_cam_images = []
-        for cam_name in self.camera_names:
-            all_cam_images.append(image_dict[cam_name])
-        all_cam_images = np.stack(all_cam_images, axis=0)
-
-        # construct observations
-        image_data = torch.from_numpy(all_cam_images)
-        qpos_data = torch.from_numpy(qpos).float()
-        action_data = torch.from_numpy(padded_action).float()
-        is_pad = torch.from_numpy(is_pad).bool()
-
-        # channel last
-        image_data = torch.einsum('k h w c -> k c h w', image_data)
-
-        # normalize image and change dtype to float
-        image_data = image_data / 255.0
-        action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
-        qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
-
-        return image_data, qpos_data, action_data, is_pad
-
-class UR5Dataset(torch.utils.data.Dataset):
-    def __init__(self, episode_ids, dataset_dir, camera_names, norm_stats):
-        super(UR5Dataset).__init__()
-        self.episode_ids = episode_ids
-        self.dataset_dir = dataset_dir
-        self.camera_names = camera_names
-        self.norm_stats = norm_stats
-        self.is_sim = None
-        self.__getitem__(0) # initialize self.is_sim
-
-    def __len__(self):
-        return len(self.episode_ids)
-
-    def __getitem__(self, index):
-        sample_full_episode = False # hardcode
-
-        episode_id = self.episode_ids[index]
-        dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_id}.hdf5')
-        with h5py.File(dataset_path, 'r') as root:
-            is_sim = root.attrs['sim']
-            original_action_shape = root['/action'].shape
-            episode_len = original_action_shape[0]
+        dataset_path = os.path.join(self.dataset_dir, f'{self.object_name}_{episode_id}.pt')
+        with open(dataset_path, 'rb') as f:
+            # filter out episodes with less than 6 joint states
+            root = pickle.load(f)
+            joint_states = [elem['joint_states'] for elem in root]
+            keep_indices = [i for i in range(0, len(joint_states)) if len(joint_states[i]) == 6]
+            root = [root[i] for i in keep_indices]
+            # episode_len = len(root)
+            episode_len = 70 # TODO: TC: temp
             start_ts = np.random.choice(episode_len)
-            # get observation at start_ts only
-            qpos = root['/observations/qpos'][start_ts]
-            qvel = root['/observations/qvel'][start_ts]
+
+            joint_states = np.array([elem['joint_states'] for elem in root])
+            grasp = np.array([elem['cmd_grasp_pos'] for elem in root])
+            qpos = np.concatenate([joint_states, grasp[..., None] ], axis=1)
+            qpos = qpos[:70] # TODO: TC: temp
+
             image_dict = dict()
             for cam_name in self.camera_names:
-                image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
-            # get all actions after and including start_ts
-            if is_sim:
-                action = root['/action'][start_ts:]
-                action_len = episode_len - start_ts
-            else:
-                action = root['/action'][max(0, start_ts - 1):] # hack, to make timesteps more aligned
-                action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+                image_dict[cam_name] = root[start_ts][cam_name]
 
-        self.is_sim = is_sim
-        padded_action = np.zeros(original_action_shape, dtype=np.float32)
+            # get all actions after and including start_ts
+            action = qpos[start_ts:]
+            action_len = episode_len - start_ts
+
+        padded_action = np.zeros_like(qpos, dtype=np.float32)
         padded_action[:action_len] = action
         is_pad = np.zeros(episode_len)
         is_pad[action_len:] = 1
@@ -142,16 +79,27 @@ class UR5Dataset(torch.utils.data.Dataset):
 
 
 def get_norm_stats(dataset_dir, num_episodes):
+    filename = os.listdir(dataset_dir)[0]
+    object_name = filename.split('_')[0]
+
     all_qpos_data = []
     all_action_data = []
     for episode_idx in range(num_episodes):
-        dataset_path = os.path.join(dataset_dir, f'episode_{episode_idx}.hdf5')
-        with h5py.File(dataset_path, 'r') as root:
-            qpos = root['/observations/qpos'][()]
-            qvel = root['/observations/qvel'][()]
-            action = root['/action'][()]
+        dataset_path = os.path.join(dataset_dir, f'{object_name}_{episode_idx}.pt')
+        with open(dataset_path, 'rb') as f:
+            root = pickle.load(f)
+            joint_states = [elem['joint_states'] for elem in root]
+            keep_indices = [i for i in range(0, len(joint_states)) if len(joint_states[i]) == 6]
+            root = [root[i] for i in keep_indices]
+
+            joint_states = np.array([elem['joint_states'] for elem in root])
+            grasp = np.array([elem['cmd_grasp_pos'] for elem in root])
+            qpos = np.concatenate([joint_states, grasp[..., None] ], axis=1)
+            qpos = qpos[:70] # TODO: TC: temp
+            action = qpos
         all_qpos_data.append(torch.from_numpy(qpos))
         all_action_data.append(torch.from_numpy(action))
+
     all_qpos_data = torch.stack(all_qpos_data)
     all_action_data = torch.stack(all_action_data)
     all_action_data = all_action_data
@@ -190,7 +138,7 @@ def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_s
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size_train, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
 
-    return train_dataloader, val_dataloader, norm_stats, train_dataset.is_sim
+    return train_dataloader, val_dataloader, norm_stats
 
 
 ### env utils
@@ -252,3 +200,15 @@ def detach_dict(d):
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
+
+if __name__ == '__main__':
+    dataset_dir = '/mount/sept30_white'
+
+    # dataset = EpisodicDataset([0], dataset_dir, ['camarm', 'camouter'], 1)
+    # data = dataset[0]
+
+    train_dataloader, val_dataloader, norm_stats = load_data(dataset_dir, 50, ['camarm', 'camouter'], 1, 1)
+    for i, data in enumerate(train_dataloader):
+        image_data, qpos_data, action_data, is_pad = data
+        print(image_data.shape, qpos_data.shape, action_data.shape, is_pad.shape)
+        break

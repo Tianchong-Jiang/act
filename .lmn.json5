@@ -1,6 +1,6 @@
 {
     "project": {
-        "name": "octo",
+        "name": "act",
         "mount": [],
         "exclude": [".git", ".env", ".venv", "Pipfile", "wandb", "*.mp4", "*.egg-info", "__pycache__", ".output", "csvs", "*.csv", "donottransport", "*.bk2/*", "*.pdf"],  // ".png",
     },
@@ -8,12 +8,12 @@
         "elm": {
             "docker": {
                 "image": "tc/act",
-                "group_id": 4000,  // ripl
+                "group_id": 3013,  // tianchong
                 "network": "host",
                 "mount_from_host": {
-                    "/ripl/data/tianchong": "/mount",
+                    "/ripl/data/tianchong/act": "/mount",
                 },
-                "startup": ["groupadd -g 4000 ripl"],
+                "startup": ["groupadd -g 3013 tianchong"],
                 "environment": {
                     "HF_HOME": "/mount/hf_home"
                 },

@@ -46,8 +46,4 @@ RUN /bin/bash -c "source $CONDA_DIR/etc/profile.d/conda.sh && \
     conda activate aloha && \
     pip install -e /opt/act/detr"
 
-# Set the entry point to activate the 'aloha' environment
 ENTRYPOINT ["/bin/bash", "-c", "source $CONDA_DIR/etc/profile.d/conda.sh && conda activate aloha && exec bash"]
-
-# Optional: Set working directory
-WORKDIR /workspace
