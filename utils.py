@@ -39,18 +39,19 @@ class EpisodicDataset(torch.utils.data.Dataset):
 
             joint_states = np.array([elem['joint_states'] for elem in root])
             grasp = np.array([elem['cmd_grasp_pos'] for elem in root])
-            qpos = np.concatenate([joint_states, grasp[..., None] ], axis=1)
-            qpos = qpos[:70] # TODO: TC: temp
+            joint_and_grasp = np.concatenate([joint_states, grasp[..., None] ], axis=1)
+            joint_and_grasp = joint_and_grasp[:70] # TODO: TC: temp
+            qpos = joint_and_grasp[0]
 
             image_dict = dict()
             for cam_name in self.camera_names:
                 image_dict[cam_name] = root[start_ts][cam_name]
 
             # get all actions after and including start_ts
-            action = qpos[start_ts:]
-            action_len = episode_len - start_ts
+            action = joint_and_grasp[start_ts+1:]
+            action_len = episode_len - start_ts - 1
 
-        padded_action = np.zeros_like(qpos, dtype=np.float32)
+        padded_action = np.zeros_like(joint_and_grasp, dtype=np.float32)
         padded_action[:action_len] = action
         is_pad = np.zeros(episode_len)
         is_pad[action_len:] = 1
@@ -63,9 +64,9 @@ class EpisodicDataset(torch.utils.data.Dataset):
 
         # construct observations
         image_data = torch.from_numpy(all_cam_images)
-        qpos_data = torch.from_numpy(qpos).float()
-        action_data = torch.from_numpy(padded_action).float()
-        is_pad = torch.from_numpy(is_pad).bool()
+        qpos_data = torch.from_numpy(qpos)
+        action_data = torch.from_numpy(padded_action)
+        is_pad = torch.from_numpy(is_pad)
 
         # channel last
         image_data = torch.einsum('k h w c -> k c h w', image_data)
@@ -75,7 +76,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
         qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
 
-        return image_data, qpos_data, action_data, is_pad
+        return image_data.float(), qpos_data.float(), action_data.float(), is_pad.bool()
 
 
 def get_norm_stats(dataset_dir, num_episodes):
