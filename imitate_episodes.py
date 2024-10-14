@@ -12,7 +12,6 @@ from tqdm import tqdm
 from einops import rearrange
 
 from utils import load_data # data functions
-from utils import sample_box_pose, sample_insertion_pose # robot functions
 from utils import compute_dict_mean, set_seed, detach_dict # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 
@@ -227,7 +226,7 @@ if __name__ == '__main__':
     parser.add_argument('--action_space', default='eef', type=str, help='joints or eef')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--onscreen_render', action='store_true')
-    parser.add_argument('--ckpt_dir', default='/mount/oct13_ckpt_eef', type=str, help='ckpt_dir')
+    parser.add_argument('--ckpt_dir', default='/mount/oct14_ckpt_joint', type=str, help='ckpt_dir')
     parser.add_argument('--policy_class', default='ACT', type=str, help='policy_class, capitalize')
     parser.add_argument('--task_name', default='cup_to_box', type=str, help='task_name')
     parser.add_argument('--batch_size', default=8, type=int, help='batch_size')
@@ -237,7 +236,7 @@ if __name__ == '__main__':
 
     # for ACT
     parser.add_argument('--kl_weight', default=10, type=int, help='KL Weight')
-    parser.add_argument('--chunk_size', default=10, type=int, help='chunk_size')
+    parser.add_argument('--chunk_size', default=30, type=int, help='chunk_size')
     parser.add_argument('--hidden_dim', default=512, type=int, help='hidden_dim')
     parser.add_argument('--dim_feedforward', default=3200, type=int, help='dim_feedforward')
     parser.add_argument('--temporal_agg', action='store_true')

@@ -42,14 +42,14 @@
                 "writable_tmpfs": true,
                 "env_from_host": ["CUDA_VISIBLE_DEVICES"],
                 "mount_from_host": {
-                    "/share/data/ripl/tianchong/octo": "/mount",
+                    "/share/data/ripl-takuma/projects/act": "/mount",
                 },
                 "environment": {
                     "HF_HOME": "/mount/hf_home"
                 },
             },
             "slurm": {
-                "constraint": "48g",
+                // "constraint": "48g",
             }
         },
     },
