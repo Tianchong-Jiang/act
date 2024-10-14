@@ -47,4 +47,8 @@ RUN /bin/bash -c "source $CONDA_DIR/etc/profile.d/conda.sh && \
     conda activate aloha && \
     pip install -e /opt/act/detr"
 
-ENTRYPOINT ["/bin/bash", "-c", "source $CONDA_DIR/etc/profile.d/conda.sh && conda activate aloha && exec bash"]
+# activate conda in .bashrc
+RUN echo "source $CONDA_DIR/etc/profile.d/conda.sh\nconda activate aloha" >> ~/.bashrc
+
+# ENTRYPOINT ["/bin/bash", "-c", "source $CONDA_DIR/etc/profile.d/conda.sh && conda activate aloha && exec bash"]
+
