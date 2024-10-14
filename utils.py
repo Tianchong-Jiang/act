@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import os
-import h5py
 from torch.utils.data import TensorDataset, DataLoader
 import pickle
 
@@ -9,12 +8,13 @@ import IPython
 e = IPython.embed
 
 class EpisodicDataset(torch.utils.data.Dataset):
-    def __init__(self, episode_ids, dataset_dir, camera_names, norm_stats):
+    def __init__(self, episode_ids, dataset_dir, camera_names, norm_stats, action_space):
         super(EpisodicDataset).__init__()
         self.episode_ids = episode_ids
         self.dataset_dir = dataset_dir
         self.camera_names = camera_names
         self.norm_stats = norm_stats
+        self.action_space = action_space
 
         # get object name
         filename = os.listdir(dataset_dir)[0]
@@ -28,19 +28,17 @@ class EpisodicDataset(torch.utils.data.Dataset):
         episode_id = self.episode_ids[index]
         dataset_path = os.path.join(self.dataset_dir, f'{self.object_name}_{episode_id}.pt')
         with open(dataset_path, 'rb') as f:
-            # filter out episodes with less than 6 joint states
+            # filter out timesteps with less than 6 joint states
             root = pickle.load(f)
             joint_states = [elem['joint_states'] for elem in root]
             keep_indices = [i for i in range(0, len(joint_states)) if len(joint_states[i]) == 6]
             root = [root[i] for i in keep_indices]
-            # episode_len = len(root)
-            episode_len = 70 # TODO: TC: temp
+            episode_len = len(root)
             start_ts = np.random.choice(episode_len)
 
             joint_states = np.array([elem['joint_states'] for elem in root])
             grasp = np.array([elem['cmd_grasp_pos'] for elem in root])
             joint_and_grasp = np.concatenate([joint_states, grasp[..., None] ], axis=1)
-            joint_and_grasp = joint_and_grasp[:70] # TODO: TC: temp
             qpos = joint_and_grasp[0]
 
             image_dict = dict()
@@ -48,12 +46,20 @@ class EpisodicDataset(torch.utils.data.Dataset):
                 image_dict[cam_name] = root[start_ts][cam_name]
 
             # get all actions after and including start_ts
-            action = joint_and_grasp[start_ts+1:]
-            action_len = episode_len - start_ts - 1
+            if self.action_space == 'joints':
+                action = joint_and_grasp[start_ts+1:]
+                action_len = episode_len - start_ts - 1
+            elif self.action_space == 'eef':
+                action = np.array([np.concatenate([elem['cmd_trans_vel'],
+                                                    elem['cmd_rot_vel'],
+                                                    np.array([elem['cmd_grasp_pos']])]) for elem in root])[start_ts:]
+                action_len = episode_len - start_ts
+            else:
+                raise NotImplementedError
 
-        padded_action = np.zeros_like(joint_and_grasp, dtype=np.float32)
+        padded_action = np.zeros([self.norm_stats['max_len'], 7], dtype=np.float32)
         padded_action[:action_len] = action
-        is_pad = np.zeros(episode_len)
+        is_pad = np.zeros(self.norm_stats['max_len'], dtype=np.float32)
         is_pad[action_len:] = 1
 
         # new axis for different cameras
@@ -79,12 +85,13 @@ class EpisodicDataset(torch.utils.data.Dataset):
         return image_data.float(), qpos_data.float(), action_data.float(), is_pad.bool()
 
 
-def get_norm_stats(dataset_dir, num_episodes):
+def get_norm_stats(dataset_dir, num_episodes, action_space):
     filename = os.listdir(dataset_dir)[0]
     object_name = filename.split('_')[0]
 
     all_qpos_data = []
     all_action_data = []
+    lengths = []
     for episode_idx in range(num_episodes):
         dataset_path = os.path.join(dataset_dir, f'{object_name}_{episode_idx}.pt')
         with open(dataset_path, 'rb') as f:
@@ -96,14 +103,29 @@ def get_norm_stats(dataset_dir, num_episodes):
             joint_states = np.array([elem['joint_states'] for elem in root])
             grasp = np.array([elem['cmd_grasp_pos'] for elem in root])
             qpos = np.concatenate([joint_states, grasp[..., None] ], axis=1)
-            qpos = qpos[:70] # TODO: TC: temp
-            action = qpos
+            if action_space == 'joints':
+                action = qpos
+            elif action_space == 'eef':
+                action = np.array([np.concatenate([elem['cmd_trans_vel'],
+                                                    elem['cmd_rot_vel'],
+                                                    np.array([elem['cmd_grasp_pos']])]) for elem in root])
+            else:
+                raise NotImplementedError
+
+        lengths.append(len(qpos))
+
         all_qpos_data.append(torch.from_numpy(qpos))
         all_action_data.append(torch.from_numpy(action))
 
+    # pad to same length
+    print(f'Lengths: {lengths}')
+    print(f'Max length: {max(lengths)}')
+    max_len = max([len(elem) for elem in all_qpos_data])
+    all_qpos_data = [torch.cat([elem, torch.zeros((max_len - len(elem), 7))]) for elem in all_qpos_data]
+    all_action_data = [torch.cat([elem, torch.zeros((max_len - len(elem), 7))]) for elem in all_action_data]
+
     all_qpos_data = torch.stack(all_qpos_data)
     all_action_data = torch.stack(all_action_data)
-    all_action_data = all_action_data
 
     # normalize action data
     action_mean = all_action_data.mean(dim=[0, 1], keepdim=True)
@@ -117,25 +139,25 @@ def get_norm_stats(dataset_dir, num_episodes):
 
     stats = {"action_mean": action_mean.numpy().squeeze(), "action_std": action_std.numpy().squeeze(),
              "qpos_mean": qpos_mean.numpy().squeeze(), "qpos_std": qpos_std.numpy().squeeze(),
-             "example_qpos": qpos}
+             "example_qpos": qpos, "max_len": max_len}
 
     return stats
 
 
-def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val):
+def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val, action_space):
     print(f'\nData from: {dataset_dir}\n')
     # obtain train test split
-    train_ratio = 0.8
+    train_ratio = 0.9
     shuffled_indices = np.random.permutation(num_episodes)
     train_indices = shuffled_indices[:int(train_ratio * num_episodes)]
     val_indices = shuffled_indices[int(train_ratio * num_episodes):]
 
     # obtain normalization stats for qpos and action
-    norm_stats = get_norm_stats(dataset_dir, num_episodes)
+    norm_stats = get_norm_stats(dataset_dir, num_episodes, action_space)
 
     # construct dataset and dataloader
-    train_dataset = EpisodicDataset(train_indices, dataset_dir, camera_names, norm_stats)
-    val_dataset = EpisodicDataset(val_indices, dataset_dir, camera_names, norm_stats)
+    train_dataset = EpisodicDataset(train_indices, dataset_dir, camera_names, norm_stats, action_space)
+    val_dataset = EpisodicDataset(val_indices, dataset_dir, camera_names, norm_stats, action_space)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size_train, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
 

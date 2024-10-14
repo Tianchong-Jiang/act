@@ -21,14 +21,13 @@
         },
         "birch": {
             "docker": {
-                "image": "ripl/octo",
-                "group_id": 4000,  // ripl
+                "image": "tc/act",
+                // "group_id": 3013,  // tianchong
                 "network": "host",
                 "mount_from_host": {
-                    "/ripl/data/tianchong/octo": "/mount",
-                    "/home/tianchong/": "/home",
+                    "/ripl/data/tianchong/act": "/mount",
                 },
-                "startup": ["groupadd -g 4000 ripl"],
+                // "startup": ["groupadd -g 3013 tianchong"],
                 "environment": {
                     "HF_HOME": "/mount/hf_home"
                 },

@@ -1,6 +1,6 @@
 import os
 # set CUDA_VISIBLE_DEVICES before importing torch
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import torch
 import numpy as np
@@ -11,8 +11,6 @@ from copy import deepcopy
 from tqdm import tqdm
 from einops import rearrange
 
-from constants import DT
-from constants import PUPPET_GRIPPER_JOINT_OPEN
 from utils import load_data # data functions
 from utils import sample_box_pose, sample_insertion_pose # robot functions
 from utils import compute_dict_mean, set_seed, detach_dict # helper functions
@@ -24,24 +22,12 @@ e = IPython.embed
 def main(args):
     set_seed(1)
 
-    ckpt_dir = args['ckpt_dir']
-    policy_class = args['policy_class']
-    onscreen_render = args['onscreen_render']
-    task_name = args['task_name']
-    batch_size_train = args['batch_size']
-    batch_size_val = args['batch_size']
-    num_epochs = args['num_epochs']
-
-    dataset_dir = '/mount/sept30_white'
-    num_episodes = 50
-    episode_len = 70
-    camera_names = ['camarm', 'camouter']
-
     # fixed parameters
     state_dim = 7
     lr_backbone = 1e-5
     backbone = 'resnet18'
-    if policy_class == 'ACT':
+
+    if args['policy_class'] == 'ACT':
         enc_layers = 4
         dec_layers = 7
         nheads = 8
@@ -55,36 +41,41 @@ def main(args):
                          'enc_layers': enc_layers,
                          'dec_layers': dec_layers,
                          'nheads': nheads,
-                         'camera_names': camera_names,
+                         'camera_names': args['camera_names'],
                          }
-    elif policy_class == 'CNNMLP':
+    elif args['policy_class'] == 'CNNMLP':
         policy_config = {'lr': args['lr'], 'lr_backbone': lr_backbone, 'backbone' : backbone, 'num_queries': 1,
-                         'camera_names': camera_names,}
+                         'camera_names': args['camera_names']}
     else:
         raise NotImplementedError
 
     config = {
-        'num_epochs': num_epochs,
-        'ckpt_dir': ckpt_dir,
-        'episode_len': episode_len,
+        'num_epochs': args['num_epochs'],
+        'ckpt_dir': args['ckpt_dir'],
+        'episode_len': args['episode_len'],
         'state_dim': state_dim,
         'lr': args['lr'],
-        'policy_class': policy_class,
-        'onscreen_render': onscreen_render,
+        'policy_class': args['policy_class'],
+        'onscreen_render': args['onscreen_render'],
         'policy_config': policy_config,
-        'task_name': task_name,
+        'task_name': args['task_name'],
         'seed': args['seed'],
         'temporal_agg': args['temporal_agg'],
-        'camera_names': camera_names,
+        'camera_names': args['camera_names'],
         'real_robot': True,
     }
 
-    train_dataloader, val_dataloader, stats = load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
+    train_dataloader, val_dataloader, stats = load_data(args['dataset_dir'],
+                                                        args['num_episodes'],
+                                                        args['camera_names'],
+                                                        args['batch_size'],
+                                                        args['batch_size'],
+                                                        args['action_space'])
 
     # save dataset stats
-    if not os.path.isdir(ckpt_dir):
-        os.makedirs(ckpt_dir)
-    stats_path = os.path.join(ckpt_dir, f'dataset_stats.pkl')
+    if not os.path.isdir(config['ckpt_dir']):
+        os.makedirs(config['ckpt_dir'])
+    stats_path = os.path.join(config['ckpt_dir'], f'dataset_stats.pkl')
     with open(stats_path, 'wb') as f:
         pickle.dump(stats, f)
 
@@ -92,7 +83,7 @@ def main(args):
     best_epoch, min_val_loss, best_state_dict = best_ckpt_info
 
     # save best checkpoint
-    ckpt_path = os.path.join(ckpt_dir, f'policy_best.ckpt')
+    ckpt_path = os.path.join(config['ckpt_dir'], f'policy_best.ckpt')
     torch.save(best_state_dict, ckpt_path)
     print(f'Best ckpt, val loss {min_val_loss:.6f} @ epoch{best_epoch}')
 
@@ -229,19 +220,24 @@ def plot_history(train_history, validation_history, num_epochs, ckpt_dir, seed):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset_dir', default='/mount/pick_place_50', type=str, help='dataset dir')
+    parser.add_argument('--num_episodes', default=50, type=int, help='num_episodes')
+    parser.add_argument('--episode_len', default=500, type=int, help='episode_len')
+    parser.add_argument('--camera_names', default=['camarm', 'camouter'], type=list, help='camera_names')
+    parser.add_argument('--action_space', default='eef', type=str, help='joints or eef')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--onscreen_render', action='store_true')
-    parser.add_argument('--ckpt_dir', default='/mount/oct10_ckpt', type=str, help='ckpt_dir')
+    parser.add_argument('--ckpt_dir', default='/mount/oct13_ckpt_eef', type=str, help='ckpt_dir')
     parser.add_argument('--policy_class', default='ACT', type=str, help='policy_class, capitalize')
     parser.add_argument('--task_name', default='cup_to_box', type=str, help='task_name')
-    parser.add_argument('--batch_size', default=32, type=int, help='batch_size')
+    parser.add_argument('--batch_size', default=8, type=int, help='batch_size')
     parser.add_argument('--seed', default=1, type=int, help='seed')
     parser.add_argument('--num_epochs', default=5000, type=int, help='num_epochs')
-    parser.add_argument('--lr', default=5e-5, type=float, help='lr')
+    parser.add_argument('--lr', default=1e-5, type=float, help='lr')
 
     # for ACT
-    parser.add_argument('--kl_weight', default=100, type=int, help='KL Weight')
-    parser.add_argument('--chunk_size', default=30, type=int, help='chunk_size')
+    parser.add_argument('--kl_weight', default=10, type=int, help='KL Weight')
+    parser.add_argument('--chunk_size', default=10, type=int, help='chunk_size')
     parser.add_argument('--hidden_dim', default=512, type=int, help='hidden_dim')
     parser.add_argument('--dim_feedforward', default=3200, type=int, help='dim_feedforward')
     parser.add_argument('--temporal_agg', action='store_true')

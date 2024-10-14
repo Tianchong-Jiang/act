@@ -38,7 +38,8 @@ RUN /bin/bash -c "source $CONDA_DIR/etc/profile.d/conda.sh && \
         einops \
         packaging \
         h5py \
-        ipython"
+        ipython \
+        wandb"
 
 # Copy and install the 'detr' package from 'act/detr'
 COPY act/detr /opt/act/detr
